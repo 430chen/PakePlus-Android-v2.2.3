@@ -185,6 +185,59 @@
         }
         .toast.show { opacity: 1; }
         canvas { display: block; max-width: 100%; height: auto; }
+
+        /* 全屏表格样式 */
+        .table-fullscreen {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 10000 !important;
+            background: var(--card-bg-end) !important;
+            border-radius: 0 !important;
+            margin: 0 !important;
+            padding: 20px !important;
+            padding-top: 60px !important;  /* 为退出按钮留出顶部空间 */
+            box-sizing: border-box !important;
+            overflow: auto !important;
+        }
+        .table-fullscreen .overflow-x-auto {
+            max-height: calc(100vh - 80px) !important;
+        }
+        .fullscreen-close-btn {
+            position: fixed;
+            top: 12px;
+            left: 16px;  /* 移到左上角，避免遮挡右上角表头 */
+            z-index: 10001;
+            background: rgba(102, 126, 234, 0.9);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            color: white;
+            border: none;
+            border-radius: 30px;
+            padding: 6px 16px;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s ease;
+        }
+        .fullscreen-close-btn:hover {
+            background: rgba(102, 126, 234, 1);
+        }
+        .fullscreen-close-btn:active {
+            transform: scale(0.96);
+        }
+        /* 暗色模式适配 */
+        @media (prefers-color-scheme: dark) {
+            .fullscreen-close-btn {
+                background: rgba(90, 103, 216, 0.9);
+            }
+        }
     </style>
 </head>
 <body class="py-4 sm:py-8 px-2 sm:px-4">
@@ -313,11 +366,13 @@
                     <div class="mt-6 sm:mt-8">
                         <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                             <h3 class="text-lg sm:text-xl font-semibold" style="color: var(--text-secondary);">详细还款计划</h3>
-                            <div class="export-group flex gap-2">
-                                <button id="export-schedule-csv" class="soft-button px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-medium text-sm sm:text-base" style="color: var(--button-primary-start);">📊 导出Excel</button>
+                            <div class="flex gap-2">
+                                <button id="expand-table-btn" class="soft-button px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-1">
+                                    <span>🔍 展开</span>
+                                </button>
                             </div>
                         </div>
-                        <div class="soft-card p-4 sm:p-6">
+                        <div id="schedule-table-container" class="soft-card p-4 sm:p-6">
                             <div class="overflow-x-auto scrollbar-thin" style="max-height: 400px; overflow-y: auto;">
                                 <table class="w-full min-w-[500px] sm:min-w-full">
                                     <thead class="rounded-lg font-bold thead-bg">
@@ -437,11 +492,13 @@
                     <div class="mt-6 sm:mt-8">
                         <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                             <h3 class="text-lg sm:text-xl font-semibold" style="color: var(--text-secondary);">详细还款计划</h3>
-                            <div class="export-group flex gap-2">
-                                <button id="export-reverse-schedule-csv" class="soft-button px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-medium text-sm sm:text-base" style="color: var(--button-primary-start);">📊 导出Excel</button>
+                            <div class="flex gap-2">
+                                <button id="expand-reverse-table-btn" class="soft-button px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-1">
+                                    <span>🔍 展开</span>
+                                </button>
                             </div>
                         </div>
-                        <div class="soft-card p-4 sm:p-6">
+                        <div id="reverse-schedule-table-container" class="soft-card p-4 sm:p-6">
                             <div class="overflow-x-auto scrollbar-thin" style="max-height: 400px; overflow-y: auto;">
                                 <table class="w-full min-w-[500px] sm:min-w-full">
                                     <thead class="rounded-lg font-bold thead-bg">
@@ -552,11 +609,6 @@
                     <div class="soft-card p-4 sm:p-6">
                         <canvas id="comparison-chart" class="w-full h-auto"></canvas>
                     </div>
-                    <div class="text-center">
-                        <div class="export-group flex gap-2 justify-center">
-                            <button id="export-comparison-csv" class="soft-button px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-medium text-sm sm:text-base" style="color: var(--button-primary-start);">📊 CSV</button>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -646,7 +698,9 @@
                     reversePayment: null,
                     comparison: null
                 },
-                validationTimer: null
+                validationTimer: null,
+                fullscreenElement: null,
+                fullscreenCloseBtn: null
             };
 
             // ==================== 辅助函数 ====================
@@ -656,12 +710,6 @@
 
             const formatNumber = (amount) => {
                 return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
-            };
-
-            const getCurrentDateTime = () => {
-                const now = new Date();
-                let str = now.toLocaleString('zh-CN', { hour12: false });
-                return str.replace(/[\\/:*?"<>|]/g, '-');
             };
 
             const showToast = (message, duration = 3000) => {
@@ -738,7 +786,6 @@
                 input.value = forceInteger(input.value);
             };
 
-            // 利率输入防抖验证
             const debounceValidate = (fn, delay = 500) => {
                 return function(...args) {
                     if (state.validationTimer) clearTimeout(state.validationTimer);
@@ -813,34 +860,41 @@
                 });
             };
 
-            const repaymentTypeToChinese = (type) => {
-                const map = {
-                    'equal-principal-interest': '等额本息',
-                    'equal-principal-equal-interest': '等本等息',
-                    'equal-principal': '等额本金',
-                    'interest-only': '先息后本'
-                };
-                return map[type] || type;
-            };
+            // ==================== 全屏表格功能 ====================
+            function toggleFullscreen(container) {
+                if (state.fullscreenElement) {
+                    exitFullscreen();
+                    return;
+                }
+                enterFullscreen(container);
+            }
 
-            const truncateFileName = (name, maxLen = 100) => {
-                if (name.length <= maxLen) return name;
-                const extIndex = name.lastIndexOf('.');
-                if (extIndex === -1) return name.slice(0, maxLen - 3) + '...';
-                const ext = name.slice(extIndex);
-                const base = name.slice(0, extIndex);
-                const available = maxLen - ext.length - 3;
-                if (available <= 0) return name.slice(0, maxLen - 3) + '...' + ext;
-                return base.slice(0, available) + '...' + ext;
-            };
+            function enterFullscreen(container) {
+                if (state.fullscreenElement) return;
+                
+                const closeBtn = document.createElement('button');
+                closeBtn.className = 'fullscreen-close-btn';
+                closeBtn.innerHTML = '✕ 退出全屏';
+                closeBtn.addEventListener('click', exitFullscreen);
+                document.body.appendChild(closeBtn);
+                
+                container.classList.add('table-fullscreen');
+                state.fullscreenElement = container;
+                state.fullscreenCloseBtn = closeBtn;
+                
+                showToast('已进入全屏，点击左上角按钮或按返回键退出');
+            }
 
-            const buildExcelFileName = (typeChinese, amount, totalPeriods, rateValue) => {
-                const amountInt = Math.round(amount);
-                const rateFormatted = rateValue.toFixed(2);
-                let fileName = `${typeChinese}_${amountInt}元_${totalPeriods}期_${rateFormatted}.xls`;
-                fileName = fileName.replace(/[\\/:*?"<>|%]/g, '-').replace(/\s+/g, '_');
-                return truncateFileName(fileName, 100);
-            };
+            function exitFullscreen() {
+                if (!state.fullscreenElement) return;
+                
+                state.fullscreenElement.classList.remove('table-fullscreen');
+                if (state.fullscreenCloseBtn) {
+                    state.fullscreenCloseBtn.remove();
+                    state.fullscreenCloseBtn = null;
+                }
+                state.fullscreenElement = null;
+            }
 
             // ==================== IRR 计算 ====================
             function calculateIRR(principal, payment, periods) {
@@ -1110,23 +1164,20 @@
                 return { periodRate: mid, annualRate: mid * periodsPerYear };
             }
 
-            // ==================== 图表管理 (修复内存泄漏) ====================
+            // ==================== 图表管理 ====================
             function getChartInstance(ctx, chartType, data, options) {
-                // 如果已存在图表实例但类型不匹配，先销毁
                 if (ctx.chart) {
                     if (ctx.chart.config.type !== chartType) {
                         ctx.chart.destroy();
                         ctx.chart = null;
                     }
                 }
-                // 如果已有实例且类型匹配，直接更新数据
                 if (ctx.chart && ctx.chart.config.type === chartType) {
                     ctx.chart.data = data;
                     ctx.chart.options = options;
                     ctx.chart.update();
                     return ctx.chart;
                 }
-                // 否则创建新实例
                 ctx.chart = new Chart(ctx, { type: chartType, data, options });
                 return ctx.chart;
             }
@@ -1651,110 +1702,6 @@
                 }
             }
 
-            // ==================== 导出Excel ====================
-            function exportScheduleExcel() {
-                if (!state.standardSchedule.length) { alert('请先计算标准贷款'); return; }
-
-                const loanAmount = state.lastStandard.principal;
-                const totalPeriods = state.standardSchedule.length;
-                const annualRatePercent = state.lastStandard.annualRate * 100;
-                const repaymentTypeChinese = repaymentTypeToChinese(state.currentRepaymentType);
-
-                const fileName = buildExcelFileName(repaymentTypeChinese, loanAmount, totalPeriods, annualRatePercent);
-
-                let html = `
-                <html><head><meta charset="UTF-8"></head><body style="font-family:'微软雅黑',sans-serif;">
-                <table cellpadding="4" cellspacing="0" style="border-collapse:collapse;width:100%;">
-                <colgroup><col width="108"><col width="108"><col width="108"><col width="108"><col width="108"></colgroup>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;font-weight:bold;text-align:center;">还款计划表（${repaymentTypeChinese}）</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">贷款额度￥${loanAmount.toFixed(2)}</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">贷款月数 ${totalPeriods}</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">贷款利率 年化${annualRatePercent.toFixed(2)}%</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">总利息 ￥${state.lastStandard.totalInterest.toFixed(2)}</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">还款总额 ￥${state.lastStandard.totalPayment.toFixed(2)}</td></tr>
-                <tr><th style="border:1px solid #d0d7de;padding:4px;">期数</th><th style="border:1px solid #d0d7de;padding:4px;">月供</th><th style="border:1px solid #d0d7de;padding:4px;">本金</th><th style="border:1px solid #d0d7de;padding:4px;">利息</th><th style="border:1px solid #d0d7de;padding:4px;">剩余本金</th></tr>
-                `;
-
-                state.standardSchedule.forEach(item => {
-                    html += `<tr><td style="border:1px solid #d0d7de;padding:4px;text-align:center;">第${item.period}期</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">${item.payment.toFixed(2)}</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#22c55e;">${item.principal.toFixed(2)}</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#ef4444;">${item.interest.toFixed(2)}</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">${item.remaining.toFixed(2)}</td></tr>`;
-                });
-
-                html += `<tr><td style="border:1px solid #d0d7de;padding:4px;text-align:center;">合计</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">${state.lastStandard.totalPayment.toFixed(2)}</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#22c55e;">${state.lastStandard.principal.toFixed(2)}</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#ef4444;">${state.lastStandard.totalInterest.toFixed(2)}</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">0.00</td></tr></table></body></html>`;
-
-                const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel' });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = fileName;
-                link.click();
-            }
-
-            function exportReverseScheduleExcel() {
-                if (!state.reverseSchedule.length) { alert('请先反推利率'); return; }
-
-                const loanAmount = state.lastReverse.principal;
-                const totalPeriods = state.reverseSchedule.length;
-                const annualRatePercent = state.lastReverse.annualRate * 100;
-                const repaymentTypeChinese = state.currentReverseMode === 'equal-principal-interest' ? '等额本息' : '先息后本';
-
-                const fileName = buildExcelFileName(repaymentTypeChinese, loanAmount, totalPeriods, annualRatePercent);
-
-                let html = `
-                <html><head><meta charset="UTF-8"></head><body style="font-family:'微软雅黑',sans-serif;">
-                <table cellpadding="4" cellspacing="0" style="border-collapse:collapse;width:100%;">
-                <colgroup><col width="108"><col width="108"><col width="108"><col width="108"><col width="108"></colgroup>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;font-weight:bold;text-align:center;">反推利率计划表（${repaymentTypeChinese}）</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">贷款额度￥${loanAmount.toFixed(2)}</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">贷款月数 ${totalPeriods}</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">反推年化利率 ${annualRatePercent.toFixed(2)}%</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">总利息 ￥${state.lastReverse.totalInterest.toFixed(2)}</td></tr>
-                <tr><td colspan="5" style="border:1px solid #d0d7de;padding:4px;text-align:center;">还款总额 ￥${state.lastReverse.totalPayment.toFixed(2)}</td></tr>
-                <tr><th style="border:1px solid #d0d7de;padding:4px;">期数</th><th style="border:1px solid #d0d7de;padding:4px;">还款</th><th style="border:1px solid #d0d7de;padding:4px;">本金</th><th style="border:1px solid #d0d7de;padding:4px;">利息</th><th style="border:1px solid #d0d7de;padding:4px;">剩余本金</th></tr>
-                `;
-
-                state.reverseSchedule.forEach(item => {
-                    html += `<tr><td style="border:1px solid #d0d7de;padding:4px;text-align:center;">第${item.period}期</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">${item.payment.toFixed(2)}</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#22c55e;">${item.principal.toFixed(2)}</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#ef4444;">${item.interest.toFixed(2)}</td>
-                    <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">${item.remaining.toFixed(2)}</td></tr>`;
-                });
-
-                html += `<tr><td style="border:1px solid #d0d7de;padding:4px;text-align:center;">合计</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">${state.lastReverse.totalPayment.toFixed(2)}</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#22c55e;">${state.lastReverse.principal.toFixed(2)}</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;color:#ef4444;">${state.lastReverse.totalInterest.toFixed(2)}</td>
-                <td style="border:1px solid #d0d7de;padding:4px;text-align:center;">0.00</td></tr></table></body></html>`;
-
-                const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel' });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = fileName;
-                link.click();
-            }
-
-            function exportComparisonCSV() {
-                const compRes = document.getElementById('comparison-results');
-                if (compRes.classList.contains('hidden')) { alert('请先进行方案对比'); return; }
-                const rows = [['指标', '方案A', '方案B', '差异 (A-B)']];
-                rows.push(['每期还款', document.getElementById('comp-a-monthly').textContent, document.getElementById('comp-b-monthly').textContent, document.getElementById('diff-monthly').textContent]);
-                rows.push(['总利息', document.getElementById('comp-a-interest').textContent, document.getElementById('comp-b-interest').textContent, document.getElementById('diff-interest').textContent]);
-                rows.push(['还款总额', document.getElementById('comp-a-total').textContent, document.getElementById('comp-b-total').textContent, document.getElementById('diff-total').textContent]);
-                const csvContent = rows.map(row => row.map(cell => cell.replace(/,/g, '')).join(',')).join('\n');
-                const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = `方案对比_${getCurrentDateTime()}.csv`;
-                link.click();
-            }
-
             // ==================== 简易计算器 ====================
             const parser = new exprEval.Parser();
 
@@ -1801,9 +1748,6 @@
                 document.getElementById('calc-expression').textContent = state.calcExpression;
                 document.getElementById('calc-display').textContent = state.calcCurrent;
             }
-
-            // 键盘监听已注释（APK环境下不需要，且可能干扰输入框）
-            // document.addEventListener('keydown', handleCalcKey);
 
             // ==================== 快速期限按钮 ====================
             function renderTermButtons(containerId, isStandard) {
@@ -2009,15 +1953,9 @@
                 document.getElementById('btn-calculate-reverse').addEventListener('click', calculateReverseRate);
                 document.getElementById('btn-compare').addEventListener('click', compareLoans);
 
-                document.getElementById('export-schedule-csv').addEventListener('click', exportScheduleExcel);
-                document.getElementById('export-reverse-schedule-csv').addEventListener('click', exportReverseScheduleExcel);
-                document.getElementById('export-comparison-csv').addEventListener('click', exportComparisonCSV);
-
                 document.querySelectorAll('[data-calc]').forEach(btn => {
                     btn.addEventListener('click', (e) => calcAppend(e.target.dataset.calc));
                 });
-                // 键盘监听已注释
-                // document.addEventListener('keydown', handleCalcKey);
 
                 document.getElementById('term-unit').addEventListener('change', () => renderTermButtons('standard-term-buttons', true));
                 document.getElementById('reverse-term-unit').addEventListener('change', () => renderTermButtons('reverse-term-buttons', false));
@@ -2047,6 +1985,29 @@
                 setRepaymentType('equal-principal-interest');
                 setupBasisToggle();
                 setupPaginationDelegation();
+
+                // 展开表格功能
+                document.getElementById('expand-table-btn').addEventListener('click', () => {
+                    const container = document.getElementById('schedule-table-container');
+                    toggleFullscreen(container);
+                });
+                document.getElementById('expand-reverse-table-btn').addEventListener('click', () => {
+                    const container = document.getElementById('reverse-schedule-table-container');
+                    toggleFullscreen(container);
+                });
+
+                // 监听返回键退出全屏
+                window.addEventListener('popstate', () => {
+                    if (state.fullscreenElement) {
+                        exitFullscreen();
+                    }
+                });
+                // ESC 键退出全屏
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && state.fullscreenElement) {
+                        exitFullscreen();
+                    }
+                });
             }
 
             init();
